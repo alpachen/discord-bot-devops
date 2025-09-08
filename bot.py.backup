@@ -1,0 +1,30 @@
+import os
+import discord
+from discord.ext import commands
+from dotenv import load_dotenv  # 新增這行
+
+# 載入環境變數
+load_dotenv()
+
+# 從環境變數讀取 Token
+TOKEN = os.getenv("DISCORD_TOKEN")
+
+# 設定意圖
+intents = discord.Intents.default()
+intents.message_content = True
+
+# 建立 Bot 物件，設定前綴詞
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+# 當 Bot 上線時觸發
+@bot.event
+async def on_ready():
+    print(f"已登入為 {bot.user}")
+
+# 當有人輸入 !hello 時，Bot 會回覆
+@bot.command()
+async def hello(ctx):
+    await ctx.send("哈囉！我是你的第一個 Discord Bot 🤖")
+
+# 啟動 Bot
+bot.run(TOKEN)
