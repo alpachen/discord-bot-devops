@@ -1,0 +1,16 @@
+name: Hello World Workflow
+
+on:
+  push:            # 每次 push 到 repo 會觸發
+    branches: [ main ]
+
+jobs:
+  hello-job:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Say Hello
+        run: echo "Hello, World! from GitHub Actions 🚀"
