@@ -56,3 +56,19 @@ jobs:
           -H "Content-Type: application/json" \
           -d "{\"content\": \"$MESSAGE\"}" \
           "${{ secrets.DISCORD_WEBHOOK }}"
+          
+     - name: 📢 使用 Bot 發送通知
+      if: always()
+      env:
+        DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+      run: |
+        # 安裝額外依賴（如果需要的話）
+        pip install discord.py
+        
+        # 根據執行狀態傳遞參數
+        if [ "${{ job.status }}" = "success" ]; then
+          python scripts/send_notification.py success
+        else
+          python scripts/send_notification.py failure
+        fi
+        
