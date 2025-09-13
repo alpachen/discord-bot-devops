@@ -1,0 +1,47 @@
+name: 🤖 Discord Bot CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  code-quality:
+    name: ✅ 程式碼品質檢查
+    runs-on: ubuntu-latest
+    
+    steps:
+    # 原有的步驟（檢查程式碼、安裝依賴等）...
+    - name: 📦 獲取程式碼
+      uses: actions/checkout@v4
+      
+    - name: 🐍 設定 Python 3.10
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: 📦 安裝依賴套件
+      run: pip install discord.py python-dotenv
+      
+    - name: 🔍 Python 語法檢查
+      run: python -m py_compile bot.py
+      
+    - name: 🧪 模組導入測試
+      run: python -c "import bot; print('✅ Bot 模組導入成功')"
+    
+    # 🔥 新增：Discord Webhook 通知步驟
+    - name: 📢 發送 Discord 通知
+      if: always()  # 無論成功失敗都發送
+      run: |
+        # 判斷執行狀態並發送相應訊息
+        if [ "${{ job.status }}" = "success" ]; then
+          MSG='{"content": "🎉 CI/CD 成功！\n✅ 所有測試通過\n👤 由: ${{ github.actor }}\n🔗 提交: ${{ github.sha }}"}'
+        else
+          MSG='{"content": "❌ CI/CD 失敗！\n⚠️ 請檢查錯誤\n👤 由: ${{ github.actor }}\n🔗 提交: ${{ github.sha }}"}'
+        fi
+        
+        curl -X POST \
+          -H "Content-Type: application/json" \
+          -d "$MSG" \
+          "${{ secrets.DISCORD_WEBHOOK_URL }}"
