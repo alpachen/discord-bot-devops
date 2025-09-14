@@ -41,7 +41,7 @@ jobs:
         "
         echo "✅ 導入測試完成"
     
-        - name: 📢 使用 Bot 發送通知
+    - name: 📢 使用 Bot 發送通知
       if: always()
       env:
         DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
