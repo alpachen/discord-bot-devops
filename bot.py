@@ -8,12 +8,9 @@ from datetime import datetime, timedelta
 import random
 import asyncio
 
-# 修改環境變數載入邏輯，兼容 Railway 和本地開發
-if os.path.exists('.env'):
-    load_dotenv('.env')
-else:
-    # 在 Railway 上直接使用環境變數
-    print("ℹ️  在 Railway 環境中運行，使用系統環境變數")
+# 載入環境變數
+load_dotenv('.env') 
+
 
 
 # 從環境變數讀取 Token
