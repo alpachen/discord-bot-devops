@@ -41,10 +41,27 @@ jobs:
         "
         echo "✅ 導入測試完成"
     
-        - name: 📢 使用 Bot 發送通知
+    - name: 📢 發送 Discord 通知
+      if: always()  # 無論成功失敗都發送
+      run: |
+        # 使用簡單英文訊息避免編碼問題
+        if [ "${{ job.status }}" = "success" ]; then
+          MESSAGE="🎉 CI/CD Success! All tests passed. By ${{ github.actor }}"
+        else
+          MESSAGE="❌ CI/CD Failed! Please check errors. By ${{ github.actor }}"
+        fi
+        
+        # 發送到 Discord Webhook
+        curl -X POST \
+          -H "Content-Type: application/json" \
+          -d "{\"content\": \"$MESSAGE\"}" \
+          "${{ secrets.DISCORD_WEBHOOK }}"
+          
+     - name: 📢 使用 Bot 發送通知
       if: always()
       env:
         DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+        GH_TOKEN: ${{ secrets.GH_TOKEN }} 
       run: |
         # 安裝額外依賴（如果需要的話）
         pip install discord.py
@@ -55,3 +72,4 @@ jobs:
         else
           python scripts/send_notification.py failure
         fi
+        
