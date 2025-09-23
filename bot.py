@@ -1,4 +1,5 @@
 import os
+os.environ["DISCORD_INSTANCE_NO_VOICE"] = "true"
 import discord
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
