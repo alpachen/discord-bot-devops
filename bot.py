@@ -7,11 +7,15 @@ import json
 from datetime import datetime, timedelta
 import random
 import asyncio
+import schedule
+import time
+import threading
 
-# 載入環境變數
-load_dotenv('.env') 
-
-
+# 環境變數載入邏輯（兼容本地和 Render）
+if os.path.exists('.env'):
+    load_dotenv('.env')
+else:
+    print("ℹ️  在 Render 環境中運行，使用系統環境變數")
 
 # 從環境變數讀取 Token
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -21,8 +25,7 @@ GITHUB_REPO = "discord-bot-devops"
 CHANGELOG_CHANNEL_ID = os.getenv("CHANGELOG_CHANNEL_ID")
 
 # 可調整的檢查頻率（單位：天）
-CHECK_INTERVAL_DAYS = 7  # 預設一周一次，您可以隨時修改這個數字
-
+CHECK_INTERVAL_DAYS = 7
 
 # 設定意圖
 intents = discord.Intents.default()
@@ -31,8 +34,183 @@ intents.message_content = True
 # 建立 Bot 物件，設定前綴詞
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# 記錄最後檢查時間
+# 全局變數用於排程觸發
+weekly_check_event = asyncio.Event()
+
+# 記錄最後檢查時間（用於手動檢查功能）
 last_check_time = datetime.now() - timedelta(days=CHECK_INTERVAL_DAYS)
+
+def run_scheduler():
+    """在背景執行排程（Render 環境優化版）"""
+    # 清除所有現有排程
+    schedule.clear()
+    
+    # 設定排程：每週一上午 9:00 執行（台灣時間 UTC+8）
+    # Render 伺服器通常是 UTC 時間，所以換算成 UTC 時間
+    schedule.every().monday.at("01:00").do(trigger_weekly_check)  # UTC 時間 01:00 = 台灣時間 09:00
+    
+    # 也可以添加測試排程（每小時執行一次，用於測試）
+    schedule.every().hour.do(trigger_test_check)
+    
+    print("⏰ 排程器設定完成：每週一 01:00 UTC (09:00 UTC+8) 自動檢查")
+    
+    while True:
+        schedule.run_pending()
+        time.sleep(60)  # 每分鐘檢查一次排程
+
+def trigger_weekly_check():
+    """觸發每周檢查（由排程器調用）"""
+    print("🔔 排程器觸發每周檢查")
+    weekly_check_event.set()
+
+def trigger_test_check():
+    """測試用排程（每小時執行）"""
+    print("🧪 每小時測試排程執行中...")
+
+async def execute_scheduled_check():
+    """執行排程的每周檢查"""
+    print(f"🔍 執行排程每周檢查...")
+    
+    # 檢查上週的 PR（上週一到現在）
+    last_monday = datetime.utcnow() - timedelta(days=7)  # 使用 UTC 時間
+    since_date = last_monday.strftime("%Y-%m-%d")
+    
+    prs, error = get_merged_prs_since(since_date)
+    
+    if error:
+        error_msg = f"❌ 自動檢查失敗: {error}"
+        print(error_msg)
+        if CHANGELOG_CHANNEL_ID:
+            await send_changelog_to_channel(error_msg)
+        return
+    
+    if prs:
+        print(f"📝 發現 {len(prs)} 個上週合併的 PR")
+        
+        # 計算時間範圍
+        start_date = last_monday.strftime("%Y-%m-%d")
+        end_date = datetime.utcnow().strftime("%Y-%m-%d")
+        
+        changelog_content = f"📊 **每周更新報告 ({start_date} ~ {end_date})**\n\n"
+        changelog_content += f"本周共合併了 **{len(prs)}** 個 PR\n\n"
+        
+        for pr in prs:
+            pr_number = pr['number']
+            pr_title = pr['title']
+            pr_url = pr['html_url']
+            author = pr['user']['login']
+            merged_at = pr['pull_request']['merged_at']
+            
+            # 格式化時間
+            merged_time = datetime.fromisoformat(merged_at.replace('Z', '+00:00'))
+            formatted_time = merged_time.strftime("%m/%d")
+            
+            changelog_content += f"• [#{pr_number}]({pr_url}) {pr_title}\n"
+            changelog_content += f"  👤 {author} | 📅 {formatted_time}\n\n"
+        
+        if CHANGELOG_CHANNEL_ID:
+            success = await send_changelog_to_channel(changelog_content)
+            if success:
+                print("✅ 排程每周報告發送成功")
+            else:
+                print("❌ 排程每周報告發送失敗")
+    else:
+        print("📭 上週沒有新合併的 PR")
+        if CHANGELOG_CHANNEL_ID:
+            await send_changelog_to_channel("📭 上週沒有新合併的 PR")
+
+@tasks.loop(seconds=30)
+async def check_scheduled_events():
+    """檢查排程事件"""
+    if weekly_check_event.is_set():
+        weekly_check_event.clear()
+        await execute_scheduled_check()
+
+async def send_changelog_to_channel(content):
+    """發送 changelog 到指定頻道"""
+    try:
+        if not CHANGELOG_CHANNEL_ID:
+            print("❌ CHANGELOG_CHANNEL_ID 未設定")
+            return False
+        
+        channel = bot.get_channel(int(CHANGELOG_CHANNEL_ID))
+        if channel:
+            # 如果內容太長，分割訊息
+            if len(content) > 2000:
+                parts = [content[i:i+2000] for i in range(0, len(content), 2000)]
+                for part in parts:
+                    await channel.send(part)
+            else:
+                await channel.send(content)
+            print(f"✅ 已發送訊息到頻道 {CHANGELOG_CHANNEL_ID}")
+            return True
+        else:
+            print(f"❌ 找不到頻道: {CHANGELOG_CHANNEL_ID}")
+            return False
+    except Exception as e:
+        print(f"❌ 發送訊息失敗: {e}")
+        return False
+
+@bot.event
+async def on_ready():
+    print(f"✅ 已登入為 {bot.user}")
+    print(f"🤖 Bot 已準備好接收指令！")
+    print(f"🌐 運行環境: {'Render' if not os.path.exists('.env') else '本地'}")
+    
+    # 計算下次排程檢查時間
+    next_check = get_next_monday()
+    print(f"⏰ 下次排程檢查時間: {next_check.strftime('%Y-%m-%d %H:%M UTC')}")
+    
+    if CHANGELOG_CHANNEL_ID:
+        print(f"📊 排程檢查已啟用，頻道: {CHANGELOG_CHANNEL_ID}")
+        
+        # 啟動排程器線程
+        scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+        scheduler_thread.start()
+        
+        # 啟動事件檢查任務
+        check_scheduled_events.start()
+        
+        print("✅ 排程系統已啟動")
+    else:
+        print("ℹ️  排程檢查未啟用（未設定 CHANGELOG_CHANNEL_ID）")
+
+def get_next_monday():
+    """獲取下週一的日期（UTC 時間）"""
+    today = datetime.utcnow()  # 使用 UTC 時間
+    days_ahead = 0 - today.weekday()  # 0 = Monday
+    if days_ahead <= 0:  # 如果今天已經過了週一
+        days_ahead += 7
+    next_monday = today + timedelta(days=days_ahead)
+    # 設定為下週一的 01:00 UTC
+    return next_monday.replace(hour=1, minute=0, second=0, microsecond=0)
+
+# 添加排程管理指令
+@bot.command()
+async def schedule_info(ctx):
+    """查看當前排程設定"""
+    next_check = get_next_monday()
+    
+    message = (
+        f"⏰ **排程設定**\n"
+        f"• 檢查時間: 每週一 09:00 (台灣時間)\n"
+        f"• 下次檢查: {next_check.strftime('%Y-%m-%d %H:%M UTC')}\n"
+        f"• 台灣時間: {(next_check + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M')}\n"
+        f"• 排程狀態: {'✅ 運行中' if CHANGELOG_CHANNEL_ID else '❌ 未啟用'}\n"
+        f"• 通知頻道: {f'<#{CHANGELOG_CHANNEL_ID}>' if CHANGELOG_CHANNEL_ID else '未設定'}"
+    )
+    
+    await ctx.send(message)
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def test_schedule(ctx):
+    """測試排程系統（立即觸發檢查）"""
+    await ctx.send("🔔 手動觸發排程檢查...")
+    await execute_scheduled_check()
+    await ctx.send("✅ 排程檢查完成")
+
+# 保留您現有的所有函數（從這裡開始都是您原有的程式碼）
 
 def get_latest_build_status():
     """獲取最近一次的建置狀態"""
@@ -376,83 +554,98 @@ def generate_changelog(prs):
     
     changelog += f"💡 使用 `!changelog {CHECK_INTERVAL_DAYS}` 查看詳細內容"
     return changelog
-    
-# 自動檢查任務 - 改為每周檢查一次
-@tasks.loop(hours=24)  # 每天檢查一次，但實際根據間隔判斷
+
+# 保留您原有的手動檢查任務（但排程系統會使用新的檢查邏輯）
+@tasks.loop(hours=24)
 async def check_new_prs_task():
-    """定期檢查新合併的 PR"""
+    """定期檢查新合併的 PR（保留原有功能）"""
     global last_check_time
     
     try:
         # 檢查是否達到設定的間隔天數
         time_since_last_check = datetime.now() - last_check_time
         if time_since_last_check.days < CHECK_INTERVAL_DAYS:
-            # 還沒到檢查時間
             next_check = last_check_time + timedelta(days=CHECK_INTERVAL_DAYS)
-            print(f"⏰ 下次檢查時間: {next_check.strftime('%Y-%m-%d %H:%M')}")
+            print(f"⏰ 下次手動檢查時間: {next_check.strftime('%Y-%m-%d %H:%M')}")
             return
         
-        print(f"🔍 進行每周檢查（間隔: {CHECK_INTERVAL_DAYS}天）...")
+        print(f"🔍 進行手動每周檢查（間隔: {CHECK_INTERVAL_DAYS}天）...")
         
-        # 獲取上次檢查後的 PRs
         since_date = last_check_time.strftime("%Y-%m-%d")
         prs, error = get_merged_prs_since(since_date)
         
         if error:
-            print(f"❌ 檢查新 PR 失敗: {error}")
+            print(f"❌ 手動檢查新 PR 失敗: {error}")
             return
         
         if prs:
             print(f"📝 發現 {len(prs)} 個新合併的 PR")
             changelog_content = generate_changelog(prs)
             
-            if changelog_content:
+            if changelog_content and CHANGELOG_CHANNEL_ID:
                 success = await send_changelog_to_channel(changelog_content)
                 if success:
-                    print("✅ 每周報告發送成功")
+                    print("✅ 手動每周報告發送成功")
         else:
             print("📭 本周沒有新合併的 PR")
         
-        # 更新最後檢查時間
         last_check_time = datetime.now()
-        print(f"✅ 檢查完成，下次檢查在 {CHECK_INTERVAL_DAYS} 天後")
+        print(f"✅ 手動檢查完成，下次檢查在 {CHECK_INTERVAL_DAYS} 天後")
         
     except Exception as e:
-        print(f"❌ 定期檢查任務錯誤: {str(e)}")
+        print(f"❌ 手動定期檢查任務錯誤: {str(e)}")
 
+# 修改 on_ready 事件，同時啟動手動檢查和排程檢查
 @bot.event
 async def on_ready():
     print(f"✅ 已登入為 {bot.user}")
     print(f"🤖 Bot 已準備好接收指令！")
-    print(f"📅 自動檢查頻率: 每 {CHECK_INTERVAL_DAYS} 天一次")
+    print(f"🌐 運行環境: {'Render' if not os.path.exists('.env') else '本地'}")
     
-    # 計算下次檢查時間
-    next_check = last_check_time + timedelta(days=CHECK_INTERVAL_DAYS)
-    print(f"⏰ 下次自動檢查時間: {next_check.strftime('%Y-%m-%d %H:%M')}")
+    # 計算下次排程檢查時間
+    next_schedule_check = get_next_monday()
+    print(f"⏰ 下次排程檢查時間: {next_schedule_check.strftime('%Y-%m-%d %H:%M UTC')}")
+    print(f"⏰ 台灣時間: {(next_schedule_check + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M')}")
     
     if CHANGELOG_CHANNEL_ID:
         print(f"📊 自動檢查已啟用，頻道: {CHANGELOG_CHANNEL_ID}")
+        
+        # 啟動手動檢查任務（保留原有功能）
         check_new_prs_task.start()
+        
+        # 啟動排程器線程
+        scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+        scheduler_thread.start()
+        
+        # 啟動事件檢查任務
+        check_scheduled_events.start()
+        
+        print("✅ 雙重檢查系統已啟動（手動 + 排程）")
     else:
         print("ℹ️  自動檢查未啟用（未設定 CHANGELOG_CHANNEL_ID）")
-        
-# 查看當前設定的指令
+
+# 保留您原有的所有指令
 @bot.command()
 async def check_settings(ctx):
     """查看當前檢查設定"""
-    next_check = last_check_time + timedelta(days=CHECK_INTERVAL_DAYS)
+    next_manual_check = last_check_time + timedelta(days=CHECK_INTERVAL_DAYS)
+    next_schedule_check = get_next_monday()
     
     message = (
         f"⚙️ **當前設定**\n"
+        f"**手動檢查系統**\n"
         f"• 檢查頻率: 每 {CHECK_INTERVAL_DAYS} 天\n"
         f"• 最後檢查: {last_check_time.strftime('%Y-%m-%d %H:%M')}\n"
-        f"• 下次檢查: {next_check.strftime('%Y-%m-%d %H:%M')}\n"
+        f"• 下次檢查: {next_manual_check.strftime('%Y-%m-%d %H:%M')}\n\n"
+        f"**排程檢查系統**\n"
+        f"• 檢查時間: 每週一 09:00 (台灣時間)\n"
+        f"• 下次檢查: {next_schedule_check.strftime('%Y-%m-%d %H:%M UTC')}\n"
+        f"• 台灣時間: {(next_schedule_check + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M')}\n\n"
         f"• 自動發送: {'✅ 已啟用' if CHANGELOG_CHANNEL_ID else '❌ 未啟用'}"
     )
     
     await ctx.send(message)
-    
-# 手動立即檢查指令（管理員用）
+
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def force_check(ctx):
@@ -481,10 +674,8 @@ async def force_check(ctx):
     else:
         await ctx.send("📭 沒有找到新的 PR")
     
-    # 更新檢查時間
     last_check_time = datetime.now()
 
-# 完整的 changelog 指令（手動）
 @bot.command()
 async def changelog(ctx, days: int = None):
     """顯示近期更新日誌"""
@@ -508,7 +699,6 @@ async def changelog(ctx, days: int = None):
         await wait_msg.edit(content=f"📭 最近 {days} 天沒有合併的 PR")
         return
     
-    # 生成詳細 changelog
     detailed_changelog = f"🚀 **最近 {days} 天更新日誌**\n\n"
     for pr in prs:
         pr_number = pr['number']
@@ -526,28 +716,19 @@ async def changelog(ctx, days: int = None):
     
     await wait_msg.edit(content=detailed_changelog)
 
-# 基本指令
 @bot.command()
 async def hello(ctx):
     await ctx.send("哈囉！我是你的 DevOps Discord Bot 🤖")
 
-# 建置狀態指令
 @bot.command()
 async def build_status(ctx):
     """查詢最近一次的 CI/CD 建置狀態"""
     print(f"收到 build_status 指令來自 {ctx.author}")
-    
-    # 顯示等待訊息
     wait_msg = await ctx.send("🔄 正在查詢建置狀態...")
-    
-    # 獲取狀態
     status_message = get_latest_build_status()
-    
-    # 編輯訊息而不是發送新訊息
     await wait_msg.edit(content=status_message)
     print(f"已回覆建置狀態")
-    
-# 新增：查詢最近 commit 指令
+
 @bot.command()
 async def last_commit(ctx):
     """查詢最近一次的 commit 訊息"""
@@ -557,12 +738,10 @@ async def last_commit(ctx):
     await wait_msg.edit(content=commit_info)
     print(f"✅ 已回覆 commit 資訊")
 
-# 修正：Pipeline 狀態指令
 @bot.command()
 async def pipeline_status(ctx, workflow_file=None):
     """查詢 GitHub Actions Pipeline 狀態"""
     print(f"📊 收到 pipeline_status 指令來自 {ctx.author}")
-    
     wait_msg = await ctx.send("🔄 正在查詢 GitHub Actions 狀態...")
     
     if workflow_file and workflow_file.lower() == 'list':
@@ -572,7 +751,6 @@ async def pipeline_status(ctx, workflow_file=None):
         status_message = get_workflow_status(workflow_file)
         await wait_msg.edit(content=status_message)
 
-# Workflow 列表指令
 @bot.command()
 async def workflow_list(ctx):
     """顯示可用的 GitHub Actions Workflows"""
@@ -582,5 +760,6 @@ async def workflow_list(ctx):
 
 # 啟動 Bot
 if __name__ == "__main__":
-    print("🚀 啟動 Discord Bot...")
+    print("🚀 啟動 Discord Bot（排程版）...")
+    print("💡 提示：Bot 需要保持運行才能執行排程任務")
     bot.run(TOKEN)
