@@ -11,6 +11,8 @@ import asyncio
 import schedule
 import time
 import threading
+from flask import Flask
+from threading import Thread
 
 # 環境變數載入邏輯（兼容本地和 Render）
 if os.path.exists('.env'):
@@ -40,6 +42,25 @@ weekly_check_event = asyncio.Event()
 
 # 記錄最後檢查時間（用於手動檢查功能）
 last_check_time = datetime.now() - timedelta(days=CHECK_INTERVAL_DAYS)
+
+
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "機器人運行中"
+
+def run_flask():
+    app.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    t = Thread(target=run_flask)
+    t.daemon = True
+    t.start()
+
+# 啟動機器人前先啟動 Flask 服務
+keep_alive()
+
 
 def run_scheduler():
     """在背景執行排程（Render 環境優化版）"""
