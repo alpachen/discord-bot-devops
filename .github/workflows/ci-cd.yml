@@ -57,7 +57,7 @@ jobs:
           -d "{\"content\": \"$MESSAGE\"}" \
           "${{ secrets.DISCORD_WEBHOOK }}"
           
-     - name: 📢 使用 Bot 發送通知
+    - name: 📢 使用 Bot 發送通知
       if: always()
       env:
         DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
@@ -72,4 +72,3 @@ jobs:
         else
           python scripts/send_notification.py failure
         fi
-        
