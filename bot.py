@@ -57,9 +57,8 @@ def home():
     return "機器人運行中"
 
 def run_flask():
-    # Render 會把對外的 port 寫進環境變數 PORT
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+    port = int(os.environ.get("PORT", 8080))  # 先抓環境變數，沒有就用 8080
+    app.run(host='0.0.0.0', port=port)
 
 def keep_alive():
     t = Thread(target=run_flask)
