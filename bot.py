@@ -45,26 +45,26 @@ weekly_check_event = asyncio.Event()
 last_check_time = datetime.now() - timedelta(days=CHECK_INTERVAL_DAYS)
 
 
-app = Flask('')
+
+app = Flask(__name__)
 
 @app.route("/health")
 def health():
     return "OK", 200
 
-@app.route('/')
+@app.route("/")
 def home():
     return "機器人運行中"
 
 def run_flask():
-    app.run(host='0.0.0.0', port=8080)
+    # Render 會把對外的 port 寫進環境變數 PORT
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 def keep_alive():
     t = Thread(target=run_flask)
     t.daemon = True
     t.start()
-
-# 啟動機器人前先啟動 Flask 服務
-keep_alive()
 
 # 記錄控制面板訊息 ID（用於重啟時更新）
 control_panel_message_id = None
