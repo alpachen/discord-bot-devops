@@ -46,6 +46,10 @@ last_check_time = datetime.now() - timedelta(days=CHECK_INTERVAL_DAYS)
 
 app = Flask('')
 
+@app.route("/health")
+def health():
+    return "OK", 200
+
 @app.route('/')
 def home():
     return "機器人運行中"
