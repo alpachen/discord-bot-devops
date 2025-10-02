@@ -26,6 +26,7 @@ GH_TOKEN = os.getenv("GH_TOKEN")
 GITHUB_OWNER = "alpachen"
 GITHUB_REPO = "discord-bot-devops"
 CHANGELOG_CHANNEL_ID = os.getenv("CHANGELOG_CHANNEL_ID")
+CONTROL_PANEL_CHANNEL_ID = os.getenv("CONTROL_PANEL_CHANNEL_ID")  # 新增：控制面板頻道ID
 
 # 可調整的檢查頻率（單位：天）
 CHECK_INTERVAL_DAYS = 7
@@ -64,6 +65,366 @@ def keep_alive():
 
 # 啟動機器人前先啟動 Flask 服務
 keep_alive()
+
+# 記錄控制面板訊息 ID（用於重啟時更新）
+control_panel_message_id = None
+
+class ControlPanelView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+    
+    @discord.ui.button(label="📊 狀態監控", style=discord.ButtonStyle.primary, custom_id="status_monitor")
+    async def status_monitor(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """狀態監控面板"""
+        embed = discord.Embed(
+            title="📊 DevOps 狀態監控",
+            description="即時系統狀態與健康度檢查",
+            color=0x3498DB
+        )
+        
+        # 獲取即時狀態
+        build_status = get_latest_build_status()
+        commit_info = get_latest_commit()
+        
+        # 簡化狀態顯示
+        embed.add_field(
+            name="🔄 CI/CD 狀態",
+            value="點擊下方按鈕查看詳細狀態",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="📝 最新提交",
+            value="查看最近程式碼變更",
+            inline=False
+        )
+        
+        view = StatusMonitorView()
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+    
+    @discord.ui.button(label="📝 變更管理", style=discord.ButtonStyle.success, custom_id="change_management")
+    async def change_management(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """變更管理面板"""
+        embed = discord.Embed(
+            title="📝 變更管理控制台",
+            description="追蹤程式碼變更與版本發布",
+            color=0x27AE60
+        )
+        
+        embed.add_field(
+            name="🔄 更新檢查",
+            value="立即檢查最新合併的 PR",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="📈 近期活動", 
+            value="查看最近開發進度",
+            inline=True
+        )
+        
+        view = ChangeManagementView()
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+    
+    @discord.ui.button(label="⚙️ 排程管理", style=discord.ButtonStyle.secondary, custom_id="schedule_management")
+    async def schedule_management(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """排程管理面板"""
+        embed = discord.Embed(
+            title="⚙️ 排程任務管理",
+            description="自動化任務與排程設定",
+            color=0xF39C12
+        )
+        
+        next_check = get_next_monday()
+        
+        embed.add_field(
+            name="⏰ 下次檢查",
+            value=f"{(next_check + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M')} (台灣時間)",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="📊 排程狀態",
+            value="✅ 運行中" if CHANGELOG_CHANNEL_ID else "❌ 未啟用",
+            inline=True
+        )
+        
+        view = ScheduleManagementView()
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+    
+    @discord.ui.button(label="🔧 系統資訊", style=discord.ButtonStyle.gray, custom_id="system_info")
+    async def system_info(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """系統資訊面板"""
+        embed = discord.Embed(
+            title="🔧 系統資訊與支援",
+            description="環境設定與技術資源",
+            color=0x95A5A6
+        )
+        
+        embed.add_field(
+            name="🌐 運行環境",
+            value="Render" if not os.path.exists('.env') else "本地",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="🤖 Bot 狀態",
+            value="✅ 在線",
+            inline=True
+        )
+        
+        view = SystemInfoView()
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+# 狀態監控子面板
+class StatusMonitorView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=120)
+    
+    @discord.ui.button(label="🚀 Pipeline 狀態", style=discord.ButtonStyle.primary)
+    async def pipeline_status(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        status_message = get_workflow_status()
+        await interaction.followup.send(status_message, ephemeral=True)
+    
+    @discord.ui.button(label="📦 建置狀態", style=discord.ButtonStyle.primary)
+    async def build_status(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        status_message = get_latest_build_status()
+        await interaction.followup.send(status_message, ephemeral=True)
+    
+    @discord.ui.button(label="📝 最新提交", style=discord.ButtonStyle.primary)
+    async def last_commit(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        commit_info = get_latest_commit()
+        await interaction.followup.send(commit_info, ephemeral=True)
+    
+    @discord.ui.button(label="📋 Workflow 列表", style=discord.ButtonStyle.secondary)
+    async def workflow_list(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        workflow_list = get_workflow_list()
+        await interaction.followup.send(workflow_list, ephemeral=True)
+    
+    @discord.ui.button(label="🔙 返回主選單", style=discord.ButtonStyle.gray)
+    async def back_to_main(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = create_main_embed()
+        view = ControlPanelView()
+        await interaction.response.edit_message(embed=embed, view=view)
+
+# 變更管理子面板
+class ChangeManagementView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=120)
+    
+    @discord.ui.button(label="🔄 立即檢查", style=discord.ButtonStyle.success)
+    async def force_check(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        global last_check_time
+        
+        since_date = last_check_time.strftime("%Y-%m-%d")
+        prs, error = get_merged_prs_since(since_date)
+        
+        if error:
+            await interaction.followup.send(error, ephemeral=True)
+            return
+        
+        if prs:
+            changelog_content = generate_changelog(prs)
+            await interaction.followup.send(changelog_content, ephemeral=True)
+        else:
+            await interaction.followup.send("📭 沒有找到新的 PR", ephemeral=True)
+        
+        last_check_time = datetime.now()
+    
+    @discord.ui.button(label="📊 近期更新", style=discord.ButtonStyle.primary)
+    async def recent_changelog(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        
+        since_date = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+        prs, error = get_merged_prs_since(since_date)
+        
+        if error:
+            await interaction.followup.send(error, ephemeral=True)
+            return
+        
+        if not prs:
+            await interaction.followup.send("📭 最近 7 天沒有合併的 PR", ephemeral=True)
+            return
+        
+        detailed_changelog = f"🚀 **最近 7 天更新日誌**\n\n"
+        for pr in prs:
+            pr_number = pr['number']
+            pr_title = pr['title']
+            pr_url = pr['html_url']
+            merged_at = pr['pull_request']['merged_at']
+            author = pr['user']['login']
+            
+            merged_time = datetime.fromisoformat(merged_at.replace('Z', '+00:00'))
+            formatted_time = merged_time.strftime("%m/%d %H:%M")
+            
+            detailed_changelog += f"**#{pr_number}** - {pr_title}\n"
+            detailed_changelog += f"⏰ {formatted_time} | 👤 {author}\n"
+            detailed_changelog += f"🔗 [查看PR]({pr_url})\n\n"
+        
+        await interaction.followup.send(detailed_changelog, ephemeral=True)
+    
+    @discord.ui.button(label="🔙 返回主選單", style=discord.ButtonStyle.gray)
+    async def back_to_main(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = create_main_embed()
+        view = ControlPanelView()
+        await interaction.response.edit_message(embed=embed, view=view)
+
+# 排程管理子面板
+class ScheduleManagementView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=120)
+    
+    @discord.ui.button(label="⏰ 排程資訊", style=discord.ButtonStyle.primary)
+    async def schedule_info(self, interaction: discord.Interaction, button: discord.ui.Button):
+        next_check = get_next_monday()
+        
+        message = (
+            f"⏰ **排程設定**\n"
+            f"• 檢查時間: 每週一 09:00 (台灣時間)\n"
+            f"• 下次檢查: {next_check.strftime('%Y-%m-%d %H:%M UTC')}\n"
+            f"• 台灣時間: {(next_check + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M')}\n"
+            f"• 排程狀態: {'✅ 運行中' if CHANGELOG_CHANNEL_ID else '❌ 未啟用'}\n"
+            f"• 通知頻道: {f'<#{CHANGELOG_CHANNEL_ID}>' if CHANGELOG_CHANNEL_ID else '未設定'}"
+        )
+        
+        await interaction.response.send_message(message, ephemeral=True)
+    
+    @discord.ui.button(label="🧪 測試排程", style=discord.ButtonStyle.success)
+    async def test_schedule(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        await execute_scheduled_check()
+        await interaction.followup.send("✅ 排程檢查完成", ephemeral=True)
+    
+    @discord.ui.button(label="🔙 返回主選單", style=discord.ButtonStyle.gray)
+    async def back_to_main(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = create_main_embed()
+        view = ControlPanelView()
+        await interaction.response.edit_message(embed=embed, view=view)
+
+# 系統資訊子面板
+class SystemInfoView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=120)
+    
+    @discord.ui.button(label="⚙️ 系統設定", style=discord.ButtonStyle.primary)
+    async def system_settings(self, interaction: discord.Interaction, button: discord.ui.Button):
+        next_manual_check = last_check_time + timedelta(days=CHECK_INTERVAL_DAYS)
+        next_schedule_check = get_next_monday()
+        
+        message = (
+            f"⚙️ **當前設定**\n"
+            f"**手動檢查系統**\n"
+            f"• 檢查頻率: 每 {CHECK_INTERVAL_DAYS} 天\n"
+            f"• 最後檢查: {last_check_time.strftime('%Y-%m-%d %H:%M')}\n"
+            f"• 下次檢查: {next_manual_check.strftime('%Y-%m-%d %H:%M')}\n\n"
+            f"**排程檢查系統**\n"
+            f"• 檢查時間: 每週一 09:00 (台灣時間)\n"
+            f"• 下次檢查: {next_schedule_check.strftime('%Y-%m-%d %H:%M UTC')}\n"
+            f"• 台灣時間: {(next_schedule_check + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M')}\n\n"
+            f"• 自動發送: {'✅ 已啟用' if CHANGELOG_CHANNEL_ID else '❌ 未啟用'}"
+        )
+        
+        await interaction.response.send_message(message, ephemeral=True)
+    
+    @discord.ui.button(label="🔧 技術支援", style=discord.ButtonStyle.secondary)
+    async def tech_support(self, interaction: discord.Interaction, button: discord.ui.Button):
+        support_message = (
+            "**🔧 技術支援**\n\n"
+            "**相關連結**\n"
+            "📖 [教學文檔](https://github.com/alpachen/discord-bot-devops)\n"
+            "🐛 [問題回報](https://github.com/alpachen/discord-bot-devops/issues)\n"
+            "💻 [原始碼](https://github.com/alpachen/discord-bot-devops)\n\n"
+            "💡 需要協助？請聯繫管理員或查看文檔。"
+        )
+        await interaction.response.send_message(support_message, ephemeral=True)
+    
+    @discord.ui.button(label="🔙 返回主選單", style=discord.ButtonStyle.gray)
+    async def back_to_main(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = create_main_embed()
+        view = ControlPanelView()
+        await interaction.response.edit_message(embed=embed, view=view)
+
+def create_main_embed():
+    """創建主控制面板的 Embed"""
+    embed = discord.Embed(
+        title="🤖 DevOps 監控控制台",
+        description="專案狀態監控與自動化管理",
+        color=0x2C3E50,
+        timestamp=datetime.utcnow()
+    )
+    
+    # 添加狀態概覽
+    embed.add_field(
+        name="📊 即時狀態概覽",
+        value=(
+            "• GitHub Actions: ✅ 正常\n"
+            "• CI/CD Pipeline: 🔄 監控中\n"
+            "• 程式碼倉庫: ✅ 正常\n"
+            "• 自動化排程: ✅ 運行中"
+        ),
+        inline=False
+    )
+    
+    # 添加功能模組說明
+    embed.add_field(
+        name="🔧 功能模組",
+        value=(
+            "**📊 狀態監控** - Pipeline、建置狀態、Commit 資訊\n"
+            "**📝 變更管理** - 更新日誌、PR 追蹤\n"
+            "**⚙️ 排程管理** - 自動化任務、排程設定\n"
+            "**🔧 系統資訊** - 環境狀態、技術支援"
+        ),
+        inline=False
+    )
+    
+    embed.set_footer(text="點擊下方按鈕開始使用")
+    
+    return embed
+
+async def send_control_panel():
+    """發送控制面板到指定頻道"""
+    global control_panel_message_id
+    
+    if not CONTROL_PANEL_CHANNEL_ID:
+        print("❌ CONTROL_PANEL_CHANNEL_ID 未設定，無法自動發送控制面板")
+        return
+    
+    try:
+        channel = bot.get_channel(int(CONTROL_PANEL_CHANNEL_ID))
+        if not channel:
+            print(f"❌ 找不到頻道: {CONTROL_PANEL_CHANNEL_ID}")
+            return
+        
+        # 檢查是否已經有控制面板訊息
+        if control_panel_message_id:
+            try:
+                existing_message = await channel.fetch_message(control_panel_message_id)
+                embed = create_main_embed()
+                view = ControlPanelView()
+                await existing_message.edit(embed=embed, view=view)
+                print("✅ 已更新現有控制面板")
+                return
+            except discord.NotFound:
+                print("📝 現有控制面板訊息不存在，將發送新的")
+            except Exception as e:
+                print(f"❌ 更新控制面板時出錯: {e}")
+        
+        # 發送新的控制面板
+        embed = create_main_embed()
+        view = ControlPanelView()
+        
+        message = await channel.send(embed=embed, view=view)
+        control_panel_message_id = message.id
+        
+        print(f"✅ 已發送控制面板到頻道 {CONTROL_PANEL_CHANNEL_ID}")
+        
+    except Exception as e:
+        print(f"❌ 發送控制面板時出錯: {e}")
 
 
 def run_scheduler():
@@ -783,6 +1144,20 @@ async def workflow_list(ctx):
     wait_msg = await ctx.send("🔄 正在獲取 workflow 列表...")
     workflow_list = get_workflow_list()
     await wait_msg.edit(content=workflow_list)
+    
+@bot.command()
+async def panel(ctx):
+    """開啟 DevOps 控制台面板"""
+    embed = create_main_embed()
+    view = ControlPanelView()
+    await ctx.send(embed=embed, view=view)
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def update_panel(ctx):
+    """更新控制面板（管理員指令）"""
+    await send_control_panel()
+    await ctx.send("✅ 已更新控制面板", ephemeral=True)
 
 # 啟動 Bot
 if __name__ == "__main__":
