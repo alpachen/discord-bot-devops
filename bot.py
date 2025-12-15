@@ -1103,7 +1103,7 @@ async def changelog(ctx, days: int = None):
     await wait_msg.edit(content=detailed_changelog)
 
 @bot.command()
-async def hello(ctx):
+async def hi(ctx):
     await ctx.send("哈囉！我是你的 DevOps Discord Bot 🤖")
 
 @bot.command()
